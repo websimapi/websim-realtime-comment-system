@@ -265,42 +265,60 @@
             
             // Check if comment already exists in our database using comprehensive duplicate check
             if (!isDuplicateComment(comment, allExistingComments)) {
-              const commentAuthorUsername = (comment.author?.username || "anonymous").replace(/^@/, '');
-              const currentUsername = currentUser ? currentUser.username.replace(/^@/, '') : '';
-              const isCurrentUserComment = currentUser && commentAuthorUsername === currentUsername;
+              // Normalize usernames by removing @ symbol and trimming
+              const commentAuthorUsername = (comment.author?.username || "anonymous").replace(/^@/, '').trim();
+              const currentUsername = currentUser ? currentUser.username.replace(/^@/, '').trim() : '';
+              
+              // Compare normalized usernames for equality check
+              const isCurrentUserComment = currentUser && 
+                commentAuthorUsername.toLowerCase() === currentUsername.toLowerCase();
+              
+              console.log("Username comparison:", {
+                commentAuthor: commentAuthorUsername,
+                currentUser: currentUsername,
+                matches: isCurrentUserComment
+              });
               
               // If it's the current user's comment, add to database
               if (isCurrentUserComment) {
-                const newComment = await room.collection('comment').create({
-                  metadata_id: comment.id,
-                  username: commentAuthorUsername,
-                  message: parseCommentContent(comment),
-                  timestamp: comment.created_at,
-                  avatar_url: comment.author?.avatar_url || null,
-                  parent_comment_id: comment.parent_comment_id,
+                try {
+                  const newComment = await room.collection('comment').create({
+                    metadata_id: comment.id,
+                    username: commentAuthorUsername,
+                    message: parseCommentContent(comment),
+                    timestamp: comment.created_at,
+                    avatar_url: comment.author?.avatar_url || null,
+                    parent_comment_id: comment.parent_comment_id,
+                    
+                    // Store all additional metadata
+                    project_id: comment.project_id,
+                    raw_content: comment.raw_content,
+                    deleted: comment.deleted || false,
+                    pinned: comment.pinned || false,
+                    pinned_by: comment.pinned_by,
+                    reactions: comment.reactions,
+                    reply_count: comment.reply_count || 0,
+                    // Don't store the full content object as it might be too large or complex
+                    // content: comment.content,
+                    author_id: comment.author?.id,
+                    author_username: commentAuthorUsername,
+                    author_avatar_url: comment.author?.avatar_url,
+                    author_name: comment.author?.name,
+                    author_role: comment.author?.role,
+                    author_profile_url: comment.author?.profile_url
+                  });
                   
-                  // Store all additional metadata
-                  project_id: comment.project_id,
-                  raw_content: comment.raw_content,
-                  deleted: comment.deleted || false,
-                  pinned: comment.pinned || false,
-                  pinned_by: comment.pinned_by,
-                  reactions: comment.reactions,
-                  reply_count: comment.reply_count || 0,
-                  content: comment.content, // Store the original content structure
-                  author_id: comment.author?.id,
-                  author_username: comment.author?.username,
-                  author_avatar_url: comment.author?.avatar_url,
-                  author_name: comment.author?.name,
-                  author_role: comment.author?.role,
-                  author_profile_url: comment.author?.profile_url
-                });
-                
-                // Mark as new for highlighting
-                newCommentsRef.current.add(newComment.id);
-                setTimeout(() => {
-                  newCommentsRef.current.delete(newComment.id);
-                }, 3000);
+                  console.log("Successfully added comment to database:", newComment.id);
+                  
+                  // Mark as new for highlighting
+                  newCommentsRef.current.add(newComment.id);
+                  setTimeout(() => {
+                    newCommentsRef.current.delete(newComment.id);
+                  }, 3000);
+                } catch (dbError) {
+                  console.error("Error adding comment to database:", dbError);
+                  setError(`Failed to add comment: ${dbError.message}`);
+                }
               } else {
                 // If it's not the current user's comment, add to unsynced comments
                 if (!newUnsyncedComments.some(c => c.id === comment.id)) {
