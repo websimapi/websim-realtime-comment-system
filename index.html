@@ -236,12 +236,12 @@
 
       // Function to check if comment is a duplicate
       const isDuplicateComment = (metadataComment, existingComments) => {
-        // First check: exact metadata_id match
+        // Primary check: exact metadata_id match
         if (existingComments.some(c => c.metadata_id === metadataComment.id)) {
           return true;
         }
         
-        // Second check: matching content, username, and timestamp
+        // Fallback check: matching content, username, and timestamp
         const parsedContent = parseCommentContent(metadataComment);
         const username = metadataComment.author?.username || "anonymous";
         const timestamp = metadataComment.created_at;
@@ -288,7 +288,7 @@
             
             // Only sync if the comment username matches the current user's username
             if (currentUsername === commentUsername) {
-              // Check if comment already exists in our database using comprehensive duplicate check
+              // Check if comment already exists in our database using metadata_id check
               if (!isDuplicateComment(comment, allExistingComments)) {
                 // Add new comment to database with all metadata
                 const newComment = await room.collection('comment').create({
