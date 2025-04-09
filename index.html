@@ -183,6 +183,57 @@
         return text || comment.raw_content || "No content";
       };
 
+      // Helper functions to extract content components
+      const extractTextNodes = (content) => {
+        if (!content || !content.children) return [];
+        
+        const textNodes = [];
+        const findTextNodes = (node) => {
+          if (!node) return;
+          
+          if (node.type === "text") {
+            textNodes.push({
+              text: node.text,
+              bold: node.bold || false,
+              italic: node.italic || false,
+              underline: node.underline || false,
+              strike: node.strike || false
+            });
+          } else if (node.children && Array.isArray(node.children)) {
+            node.children.forEach(findTextNodes);
+          }
+        };
+        
+        content.children.forEach(findTextNodes);
+        return textNodes;
+      };
+      
+      const extractLinkNodes = (content) => {
+        if (!content || !content.children) return [];
+        
+        const linkNodes = [];
+        const findLinkNodes = (node) => {
+          if (!node) return;
+          
+          if (node.type === "link") {
+            linkNodes.push({
+              url: node.url,
+              text: node.children?.[0]?.text || ""
+            });
+          } else if (node.children && Array.isArray(node.children)) {
+            node.children.forEach(findLinkNodes);
+          }
+        };
+        
+        content.children.forEach(findLinkNodes);
+        return linkNodes;
+      };
+      
+      const countParagraphs = (content) => {
+        if (!content || !content.children) return 0;
+        return content.children.filter(node => node.type === "paragraph").length;
+      };
+
       // Function to check if comment is a duplicate
       const isDuplicateComment = (metadataComment, existingComments) => {
         // First check: exact metadata_id match
@@ -258,8 +309,14 @@
                 pinned_by: comment.pinned_by,
                 reactions: comment.reactions,
                 reply_count: comment.reply_count || 0,
-                content: comment.content // Store the original content structure
-                // Removed storing the full author object
+                
+                // Store content object in individual fields
+                content_type: comment.content?.type || null,
+                content_children: comment.content?.children || [],
+                // Extract other important content properties if needed
+                content_text_nodes: extractTextNodes(comment.content),
+                content_link_nodes: extractLinkNodes(comment.content),
+                content_paragraph_count: countParagraphs(comment.content)
               });
               
               // Mark as new for highlighting
