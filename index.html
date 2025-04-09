@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Realtime Comment System</title>
+  <script src="https://cdn.jsdelivr.net/npm/react@18/umd/react.development.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@babel/standalone/babel.min.js"></script>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+      margin: 0;
+      padding: 0;
+      background: #f5f5f5;
+      color: #333;
+    }
+    .container {
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+    .header {
+      text-align: center;
+      margin-bottom: 20px;
+    }
+    .comment-list {
+      background: white;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      padding: 20px;
+    }
+    .comment {
+      padding: 15px;
+      border-bottom: 1px solid #eee;
+      display: flex;
+      align-items: flex-start;
+      animation: fadeIn 0.3s ease-in-out;
+    }
+    .comment:last-child {
+      border-bottom: none;
+    }
+    .avatar {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      margin-right: 15px;
+      object-fit: cover;
+    }
+    .content {
+      flex: 1;
+    }
+    .username {
+      font-weight: bold;
+      margin-bottom: 5px;
+    }
+    .timestamp {
+      font-size: 12px;
+      color: #999;
+      margin-bottom: 8px;
+    }
+    .message {
+      line-height: 1.5;
+    }
+    .status {
+      text-align: center;
+      padding: 10px;
+      color: #666;
+      font-style: italic;
+      font-size: 14px;
+    }
+    .new-comment {
+      background-color: #f0f8ff;
+      transition: background-color 1s ease;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .sync-indicator {
+      position: fixed;
+      bottom: 10px;
+      right: 10px;
+      background: rgba(0,0,0,0.7);
+      color: white;
+      padding: 5px 10px;
+      border-radius: 20px;
+      font-size: 12px;
+      display: flex;
+      align-items: center;
+    }
+    .sync-dot {
+      width: 8px;
+      height: 8px;
+      background-color: #4CAF50;
+      border-radius: 50%;
+      margin-right: 5px;
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse {
+      0% { opacity: 0.5; }
+      50% { opacity: 1; }
+      100% { opacity: 0.5; }
+    }
+    @media (max-width: 768px) {
+      .container {
+        padding: 10px;
+      }
+      .comment {
+        padding: 10px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    // Initialize Websim database connection
+    const room = new WebsimSocket();
+
+    function CommentSystem() {
+      const [lastSyncTime, setLastSyncTime] = useState(null);
+      const [isSyncing, setIsSyncing] = useState(false);
+      const newCommentsRef = useRef(new Set());
+
+      // Use React's useSyncExternalStore to sync with database
+      const comments = React.useSyncExternalStore(
+        room.collection('comment').subscribe,
+        room.collection('comment').getList
+      );
+
+      // Function to fetch metadata comments
+      const fetchMetadataComments = async () => {
+        try {
+          setIsSyncing(true);
+          
+          // In a real implementation, replace this with your actual API call to get metadata comments
+          // For example, you might use:
+          // const response = await fetch('/api/v1/projects/{id}/comments');
+          // const data = await response.json();
+          
+          // For demonstration, we'll simulate getting some comments
+          const metadataComments = simulateMetadataFetch();
+          
+          // Process and sync each comment to our database
+          for (const comment of metadataComments) {
+            // Check if comment already exists in our database
+            const existingComments = room.collection('comment')
+              .filter({ metadata_id: comment.id })
+              .getList();
+              
+            if (existingComments.length === 0) {
+              // Add new comment to database
+              const newComment = await room.collection('comment').create({
+                metadata_id: comment.id,
+                username: comment.author,
+                message: comment.content,
+                timestamp: comment.created_at,
+                // Add any other metadata fields you need
+              });
+              
+              // Mark as new for highlighting
+              newCommentsRef.current.add(newComment.id);
+              setTimeout(() => {
+                newCommentsRef.current.delete(newComment.id);
+              }, 3000);
+            }
+          }
+          
+          setLastSyncTime(new Date());
+        } catch (error) {
+          console.error('Error syncing comments:', error);
+        } finally {
+          setIsSyncing(false);
+        }
+      };
+
+      // Function to simulate getting metadata comments (replace with real API call)
+      const simulateMetadataFetch = () => {
+        // In a real implementation, this would be your API response
+        return [
+          {
+            id: 'meta_' + Date.now(),
+            author: 'user_' + Math.floor(Math.random() * 1000),
+            content: 'This is a new comment from metadata at ' + new Date().toLocaleTimeString(),
+            created_at: new Date().toISOString()
+          }
+        ];
+      };
+
+      // Set up periodic sync
+      useEffect(() => {
+        // Initial fetch
+        fetchMetadataComments();
+        
+        // Set up interval for periodic sync (7 seconds)
+        const intervalId = setInterval(fetchMetadataComments, 7000);
+        
+        // Clean up on unmount
+        return () => clearInterval(intervalId);
+      }, []);
+
+      // Format timestamp
+      const formatTimestamp = (timestamp) => {
+        try {
+          const date = new Date(timestamp);
+          return date.toLocaleString();
+        } catch (e) {
+          return timestamp;
+        }
+      };
+
+      // Check if a comment is new
+      const isNewComment = (id) => {
+        return newCommentsRef.current.has(id);
+      };
+
+      return (
+        <div className="container">
+          <div className="header">
+            <h1>Realtime Comments</h1>
+          </div>
+          
+          <div className="comment-list">
+            {comments.length === 0 ? (
+              <div className="status">No comments yet</div>
+            ) : (
+              comments.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp)).map(comment => (
+                <div key={comment.id} className={`comment ${isNewComment(comment.id) ? 'new-comment' : ''}`}>
+                  <img 
+                    src={`https://images.websim.ai/avatar/${comment.username}`} 
+                    alt={comment.username} 
+                    className="avatar" 
+                    onError={(e) => { e.target.src = 'https://via.placeholder.com/40'; }}
+                  />
+                  <div className="content">
+                    <div className="username">@{comment.username}</div>
+                    <div className="timestamp">{formatTimestamp(comment.timestamp)}</div>
+                    <div className="message">{comment.message}</div>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+          
+          {lastSyncTime && (
+            <div className="sync-indicator">
+              <div className="sync-dot"></div>
+              <span>{isSyncing ? 'Syncing...' : `Last sync: ${lastSyncTime.toLocaleTimeString()}`}</span>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // Render the app
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<CommentSystem />);
+  </script>
+<script defer src="https://static.cloudflareinsights.com/beacon.min.js/v8c78df7c7c0f484497ecbca7046644da1771523124516" integrity="sha512-8DS7rgIrAmghBFwoOTujcf6D9rXvH8xm8JQ1Ja01h9QX8EzXldiszufYa4IFfKdLUKTTrnSFXLDkUEOTrZQ8Qg==" data-cf-beacon='{"version":"2024.11.0","token":"4c6229722a6346bc8eb5cb0e5eae5d41","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
+</body>
+</html>
+
