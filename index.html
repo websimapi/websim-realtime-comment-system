@@ -232,14 +232,25 @@
             
             // Check if comment already exists in our database using comprehensive duplicate check
             if (!isDuplicateComment(comment, allExistingComments)) {
-              // Add new comment to database
+              // Add new comment to database with all metadata
               const newComment = await room.collection('comment').create({
                 metadata_id: comment.id,
                 username: comment.author?.username || "anonymous",
                 message: parseCommentContent(comment),
                 timestamp: comment.created_at,
                 avatar_url: comment.author?.avatar_url || null,
-                parent_comment_id: comment.parent_comment_id
+                parent_comment_id: comment.parent_comment_id,
+                
+                // Store all additional metadata
+                project_id: comment.project_id,
+                raw_content: comment.raw_content,
+                deleted: comment.deleted || false,
+                pinned: comment.pinned || false,
+                pinned_by: comment.pinned_by,
+                reactions: comment.reactions,
+                reply_count: comment.reply_count || 0,
+                content: comment.content, // Store the original content structure
+                author: comment.author     // Store the full author object
               });
               
               // Mark as new for highlighting
