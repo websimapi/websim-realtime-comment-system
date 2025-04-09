@@ -126,6 +126,23 @@
       margin-right: 5px;
       animation: pulse 2s infinite;
     }
+    .user-info {
+      position: absolute;
+      top: 20px;
+      right: 20px;
+      display: flex;
+      align-items: center;
+      background: white;
+      padding: 8px 15px;
+      border-radius: 20px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .user-avatar {
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      margin-right: 10px;
+    }
     @media (max-width: 768px) {
       .container {
         padding: 10px;
@@ -223,13 +240,15 @@
         // Second check: matching content, username, and timestamp
         const parsedContent = parseCommentContent(metadataComment);
         const username = metadataComment.author?.username || "anonymous";
+        const normalizedUsername = username.startsWith('@') ? username : `@${username}`;
         const timestamp = metadataComment.created_at;
         
-        return existingComments.some(c => 
-          c.username === username && 
-          c.message === parsedContent && 
-          c.timestamp === timestamp
-        );
+        return existingComments.some(c => {
+          const normalizedExistingUsername = c.username.startsWith('@') ? c.username : `@${c.username}`;
+          return normalizedExistingUsername === normalizedUsername && 
+            c.message === parsedContent && 
+            c.timestamp === timestamp;
+        });
       };
 
       // Function to fetch metadata comments
@@ -266,7 +285,12 @@
             // Check if comment already exists in our database using comprehensive duplicate check
             if (!isDuplicateComment(comment, allExistingComments)) {
               const commentAuthorUsername = comment.author?.username || "anonymous";
-              const isCurrentUserComment = currentUser && commentAuthorUsername === currentUser.username;
+              const normalizedCommentUsername = commentAuthorUsername.startsWith('@') ? 
+                commentAuthorUsername : `@${commentAuthorUsername}`;
+              const normalizedCurrentUsername = currentUser && (currentUser.username.startsWith('@') ? 
+                currentUser.username : `@${currentUser.username}`);
+              
+              const isCurrentUserComment = currentUser && normalizedCommentUsername === normalizedCurrentUsername;
               
               // If it's the current user's comment, add to database
               if (isCurrentUserComment) {
@@ -363,9 +387,18 @@
 
       return (
         <div className="container">
+          {currentUser && (
+            <div className="user-info">
+              <img 
+                src={`https://images.websim.ai/avatar/${currentUser.username}`}
+                alt={currentUser.username}
+                className="user-avatar"
+              />
+              <span>@{currentUser.username}</span>
+            </div>
+          )}
           <div className="header">
             <h1>Realtime Comments</h1>
-            {currentUser && <p>Logged in as: @{currentUser.username}</p>}
           </div>
           
           {error && (
