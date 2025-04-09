@@ -29,6 +29,7 @@
       border-radius: 8px;
       box-shadow: 0 2px 4px rgba(0,0,0,0.1);
       padding: 20px;
+      margin-bottom: 70px;
     }
     .comment {
       padding: 15px;
@@ -102,6 +103,14 @@
       50% { opacity: 1; }
       100% { opacity: 0.5; }
     }
+    .error-message {
+      background: #fff0f0;
+      color: #e74c3c;
+      padding: 10px;
+      border-radius: 5px;
+      margin: 10px 0;
+      text-align: center;
+    }
     @media (max-width: 768px) {
       .container {
         padding: 10px;
@@ -124,7 +133,9 @@
     function CommentSystem() {
       const [lastSyncTime, setLastSyncTime] = useState(null);
       const [isSyncing, setIsSyncing] = useState(false);
+      const [error, setError] = useState(null);
       const newCommentsRef = useRef(new Set());
+      const projectIdRef = useRef(null);
 
       // Use React's useSyncExternalStore to sync with database
       const comments = React.useSyncExternalStore(
@@ -132,21 +143,71 @@
         room.collection('comment').getList
       );
 
+      // Function to get current project ID
+      const getCurrentProjectId = async () => {
+        try {
+          // Try to get the current project from websim
+          const currentProject = await window.websim.getCurrentProject();
+          if (currentProject && currentProject.id) {
+            projectIdRef.current = currentProject.id;
+            return currentProject.id;
+          }
+          
+          // Fallback: For testing, you could return a hardcoded ID
+          return projectIdRef.current || "defaultProjectId";
+        } catch (err) {
+          console.error("Error getting project ID:", err);
+          return projectIdRef.current || "defaultProjectId";
+        }
+      };
+
+      // Function to parse comment content
+      const parseCommentContent = (comment) => {
+        if (!comment.content || !comment.content.children) {
+          return comment.raw_content || "No content";
+        }
+
+        // Extract text content from the DocumentNode structure
+        let text = "";
+        const extractText = (node) => {
+          if (!node) return;
+          
+          if (node.type === "text") {
+            text += node.text;
+          } else if (node.children && Array.isArray(node.children)) {
+            node.children.forEach(extractText);
+          }
+        };
+
+        comment.content.children.forEach(extractText);
+        return text || comment.raw_content || "No content";
+      };
+
       // Function to fetch metadata comments
       const fetchMetadataComments = async () => {
         try {
           setIsSyncing(true);
+          setError(null);
           
-          // In a real implementation, replace this with your actual API call to get metadata comments
-          // For example, you might use:
-          // const response = await fetch('/api/v1/projects/{id}/comments');
-          // const data = await response.json();
+          const projectId = await getCurrentProjectId();
+          if (!projectId) {
+            throw new Error("Could not determine project ID");
+          }
           
-          // For demonstration, we'll simulate getting some comments
-          const metadataComments = simulateMetadataFetch();
+          // Make the actual API call to get metadata comments
+          const response = await fetch(`/api/v1/projects/${projectId}/comments`);
+          
+          if (!response.ok) {
+            throw new Error(`API returned status ${response.status}`);
+          }
+          
+          const data = await response.json();
+          const metadataComments = data.comments?.data || [];
           
           // Process and sync each comment to our database
-          for (const comment of metadataComments) {
+          for (const item of metadataComments) {
+            const comment = item.comment;
+            
             // Check if comment already exists in our database
             const existingComments = room.collection('comment')
               .filter({ metadata_id: comment.id })
@@ -156,10 +217,11 @@
               // Add new comment to database
               const newComment = await room.collection('comment').create({
                 metadata_id: comment.id,
-                username: comment.author,
-                message: comment.content,
+                username: comment.author?.username || "anonymous",
+                message: parseCommentContent(comment),
                 timestamp: comment.created_at,
-                // Add any other metadata fields you need
+                avatar_url: comment.author?.avatar_url || null,
+                parent_comment_id: comment.parent_comment_id
               });
               
               // Mark as new for highlighting
@@ -173,22 +235,10 @@
           setLastSyncTime(new Date());
         } catch (error) {
           console.error('Error syncing comments:', error);
+          setError(`Failed to sync comments: ${error.message}`);
         } finally {
           setIsSyncing(false);
         }
-      };
-
-      // Function to simulate getting metadata comments (replace with real API call)
-      const simulateMetadataFetch = () => {
-        // In a real implementation, this would be your API response
-        return [
-          {
-            id: 'meta_' + Date.now(),
-            author: 'user_' + Math.floor(Math.random() * 1000),
-            content: 'This is a new comment from metadata at ' + new Date().toLocaleTimeString(),
-            created_at: new Date().toISOString()
-          }
-        ];
       };
 
       // Set up periodic sync
@@ -224,6 +274,10 @@
             <h1>Realtime Comments</h1>
           </div>
           
+          {error && (
+            <div className="error-message">{error}</div>
+          )}
+          
           <div className="comment-list">
             {comments.length === 0 ? (
               <div className="status">No comments yet</div>
@@ -231,7 +285,7 @@
               comments.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp)).map(comment => (
                 <div key={comment.id} className={`comment ${isNewComment(comment.id) ? 'new-comment' : ''}`}>
                   <img 
-                    src={`https://images.websim.ai/avatar/${comment.username}`} 
+                    src={comment.avatar_url || `https://images.websim.ai/avatar/${comment.username}`} 
                     alt={comment.username} 
                     className="avatar" 
                     onError={(e) => { e.target.src = 'https://via.placeholder.com/40'; }}
@@ -263,4 +317,3 @@
 <script defer src="https://static.cloudflareinsights.com/beacon.min.js/v8c78df7c7c0f484497ecbca7046644da1771523124516" integrity="sha512-8DS7rgIrAmghBFwoOTujcf6D9rXvH8xm8JQ1Ja01h9QX8EzXldiszufYa4IFfKdLUKTTrnSFXLDkUEOTrZQ8Qg==" data-cf-beacon='{"version":"2024.11.0","token":"4c6229722a6346bc8eb5cb0e5eae5d41","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
 </body>
 </html>
-
