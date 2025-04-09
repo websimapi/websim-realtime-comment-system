@@ -183,6 +183,25 @@
         return text || comment.raw_content || "No content";
       };
 
+      // Function to check if comment is a duplicate
+      const isDuplicateComment = (metadataComment, existingComments) => {
+        // First check: exact metadata_id match
+        if (existingComments.some(c => c.metadata_id === metadataComment.id)) {
+          return true;
+        }
+        
+        // Second check: matching content, username, and timestamp
+        const parsedContent = parseCommentContent(metadataComment);
+        const username = metadataComment.author?.username || "anonymous";
+        const timestamp = metadataComment.created_at;
+        
+        return existingComments.some(c => 
+          c.username === username && 
+          c.message === parsedContent && 
+          c.timestamp === timestamp
+        );
+      };
+
       // Function to fetch metadata comments
       const fetchMetadataComments = async () => {
         try {
@@ -204,16 +223,15 @@
           const data = await response.json();
           const metadataComments = data.comments?.data || [];
           
+          // Get all existing comments for comparison
+          const allExistingComments = room.collection('comment').getList();
+          
           // Process and sync each comment to our database
           for (const item of metadataComments) {
             const comment = item.comment;
             
-            // Check if comment already exists in our database
-            const existingComments = room.collection('comment')
-              .filter({ metadata_id: comment.id })
-              .getList();
-              
-            if (existingComments.length === 0) {
+            // Check if comment already exists in our database using comprehensive duplicate check
+            if (!isDuplicateComment(comment, allExistingComments)) {
               // Add new comment to database
               const newComment = await room.collection('comment').create({
                 metadata_id: comment.id,
