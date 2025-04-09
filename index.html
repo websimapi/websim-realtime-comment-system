@@ -136,6 +136,7 @@
       const [error, setError] = useState(null);
       const newCommentsRef = useRef(new Set());
       const projectIdRef = useRef(null);
+      const syncedCommentIdsRef = useRef(new Set());
 
       // Use React's useSyncExternalStore to sync with database
       const comments = React.useSyncExternalStore(
@@ -143,17 +144,23 @@
         room.collection('comment').getList
       );
 
+      // Update synced comment IDs when comments change
+      useEffect(() => {
+        if (comments && comments.length > 0) {
+          syncedCommentIdsRef.current = new Set(
+            comments.map(comment => comment.metadata_id).filter(Boolean)
+          );
+        }
+      }, [comments]);
+
       // Function to get current project ID
       const getCurrentProjectId = async () => {
         try {
-          // Try to get the current project from websim
           const currentProject = await window.websim.getCurrentProject();
           if (currentProject && currentProject.id) {
             projectIdRef.current = currentProject.id;
             return currentProject.id;
           }
-          
-          // Fallback: For testing, you could return a hardcoded ID
           return projectIdRef.current || "defaultProjectId";
         } catch (err) {
           console.error("Error getting project ID:", err);
@@ -166,19 +173,15 @@
         if (!comment.content || !comment.content.children) {
           return comment.raw_content || "No content";
         }
-
-        // Extract text content from the DocumentNode structure
         let text = "";
         const extractText = (node) => {
           if (!node) return;
-          
           if (node.type === "text") {
             text += node.text;
           } else if (node.children && Array.isArray(node.children)) {
             node.children.forEach(extractText);
           }
         };
-
         comment.content.children.forEach(extractText);
         return text || comment.raw_content || "No content";
       };
@@ -186,11 +189,9 @@
       // Helper functions to extract content components
       const extractTextNodes = (content) => {
         if (!content || !content.children) return [];
-        
         const textNodes = [];
         const findTextNodes = (node) => {
           if (!node) return;
-          
           if (node.type === "text") {
             textNodes.push({
               text: node.text,
@@ -203,18 +204,15 @@
             node.children.forEach(findTextNodes);
           }
         };
-        
         content.children.forEach(findTextNodes);
         return textNodes;
       };
-      
+
       const extractLinkNodes = (content) => {
         if (!content || !content.children) return [];
-        
         const linkNodes = [];
         const findLinkNodes = (node) => {
           if (!node) return;
-          
           if (node.type === "link") {
             linkNodes.push({
               url: node.url,
@@ -224,11 +222,10 @@
             node.children.forEach(findLinkNodes);
           }
         };
-        
         content.children.forEach(findLinkNodes);
         return linkNodes;
       };
-      
+
       const countParagraphs = (content) => {
         if (!content || !content.children) return 0;
         return content.children.filter(node => node.type === "paragraph").length;
@@ -236,21 +233,25 @@
 
       // Function to check if comment is a duplicate
       const isDuplicateComment = (metadataComment, existingComments) => {
-        // Primary check: exact metadata_id match
-        if (existingComments.some(c => c.metadata_id === metadataComment.id)) {
+        if (syncedCommentIdsRef.current.has(metadataComment.id)) {
           return true;
         }
-        
-        // Fallback check: matching content, username, and timestamp
+        if (existingComments.some(c => c.metadata_id === metadataComment.id)) {
+          syncedCommentIdsRef.current.add(metadataComment.id);
+          return true;
+        }
         const parsedContent = parseCommentContent(metadataComment);
         const username = metadataComment.author?.username || "anonymous";
         const timestamp = metadataComment.created_at;
-        
-        return existingComments.some(c => 
+        const isDuplicate = existingComments.some(c => 
           c.username === username && 
           c.message === parsedContent && 
           c.timestamp === timestamp
         );
+        if (isDuplicate) {
+          syncedCommentIdsRef.current.add(metadataComment.id);
+        }
+        return isDuplicate;
       };
 
       // Function to fetch metadata comments
@@ -258,39 +259,24 @@
         try {
           setIsSyncing(true);
           setError(null);
-          
-          // Get current logged-in user
           const currentUser = await window.websim.getUser();
           const currentUsername = currentUser?.username;
-          
           const projectId = await getCurrentProjectId();
           if (!projectId) {
             throw new Error("Could not determine project ID");
           }
-          
-          // Make the actual API call to get metadata comments
           const response = await fetch(`/api/v1/projects/${projectId}/comments`);
-          
           if (!response.ok) {
             throw new Error(`API returned status ${response.status}`);
           }
-          
           const data = await response.json();
           const metadataComments = data.comments?.data || [];
-          
-          // Get all existing comments for comparison
           const allExistingComments = room.collection('comment').getList();
-          
-          // Process and sync each comment to our database
           for (const item of metadataComments) {
             const comment = item.comment;
             const commentUsername = comment.author?.username || "anonymous";
-            
-            // Only sync if the comment username matches the current user's username
             if (currentUsername === commentUsername) {
-              // Check if comment already exists in our database using metadata_id check
               if (!isDuplicateComment(comment, allExistingComments)) {
-                // Add new comment to database with all metadata
                 const newComment = await room.collection('comment').create({
                   metadata_id: comment.id,
                   username: commentUsername,
@@ -298,8 +284,6 @@
                   timestamp: comment.created_at,
                   avatar_url: comment.author?.avatar_url || null,
                   parent_comment_id: comment.parent_comment_id,
-                  
-                  // Store author data in individual columns instead of as a whole object
                   author_id: comment.author?.id || null,
                   author_created_at: comment.author?.created_at || null,
                   author_description: comment.author?.description || null,
@@ -307,8 +291,6 @@
                   author_discord_username: comment.author?.discord_username || null,
                   author_discord_id: comment.author?.discord_id || null,
                   author_is_admin: comment.author?.is_admin || false,
-                  
-                  // Store all additional metadata
                   project_id: comment.project_id,
                   raw_content: comment.raw_content,
                   deleted: comment.deleted || false,
@@ -316,17 +298,13 @@
                   pinned_by: comment.pinned_by,
                   reactions: comment.reactions,
                   reply_count: comment.reply_count || 0,
-                  
-                  // Store content object in individual fields
                   content_type: comment.content?.type || null,
                   content_children: comment.content?.children || [],
-                  // Extract other important content properties if needed
                   content_text_nodes: extractTextNodes(comment.content),
                   content_link_nodes: extractLinkNodes(comment.content),
                   content_paragraph_count: countParagraphs(comment.content)
                 });
-                
-                // Mark as new for highlighting
+                syncedCommentIdsRef.current.add(comment.id);
                 newCommentsRef.current.add(newComment.id);
                 setTimeout(() => {
                   newCommentsRef.current.delete(newComment.id);
@@ -334,7 +312,6 @@
               }
             }
           }
-          
           setLastSyncTime(new Date());
         } catch (error) {
           console.error('Error syncing comments:', error);
@@ -346,13 +323,8 @@
 
       // Set up periodic sync
       useEffect(() => {
-        // Initial fetch
         fetchMetadataComments();
-        
-        // Set up interval for periodic sync (7 seconds)
         const intervalId = setInterval(fetchMetadataComments, 7000);
-        
-        // Clean up on unmount
         return () => clearInterval(intervalId);
       }, []);
 
@@ -376,11 +348,9 @@
           <div className="header">
             <h1>Realtime Comments</h1>
           </div>
-          
           {error && (
             <div className="error-message">{error}</div>
           )}
-          
           <div className="comment-list">
             {comments.length === 0 ? (
               <div className="status">No comments yet</div>
@@ -402,7 +372,6 @@
               ))
             )}
           </div>
-          
           {lastSyncTime && (
             <div className="sync-indicator">
               <div className="sync-dot"></div>
