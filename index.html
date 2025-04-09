@@ -259,6 +259,10 @@
           setIsSyncing(true);
           setError(null);
           
+          // Get current logged-in user
+          const currentUser = await window.websim.getUser();
+          const currentUsername = currentUser?.username;
+          
           const projectId = await getCurrentProjectId();
           if (!projectId) {
             throw new Error("Could not determine project ID");
@@ -280,50 +284,54 @@
           // Process and sync each comment to our database
           for (const item of metadataComments) {
             const comment = item.comment;
+            const commentUsername = comment.author?.username || "anonymous";
             
-            // Check if comment already exists in our database using comprehensive duplicate check
-            if (!isDuplicateComment(comment, allExistingComments)) {
-              // Add new comment to database with all metadata
-              const newComment = await room.collection('comment').create({
-                metadata_id: comment.id,
-                username: comment.author?.username || "anonymous",
-                message: parseCommentContent(comment),
-                timestamp: comment.created_at,
-                avatar_url: comment.author?.avatar_url || null,
-                parent_comment_id: comment.parent_comment_id,
+            // Only sync if the comment username matches the current user's username
+            if (currentUsername === commentUsername) {
+              // Check if comment already exists in our database using comprehensive duplicate check
+              if (!isDuplicateComment(comment, allExistingComments)) {
+                // Add new comment to database with all metadata
+                const newComment = await room.collection('comment').create({
+                  metadata_id: comment.id,
+                  username: commentUsername,
+                  message: parseCommentContent(comment),
+                  timestamp: comment.created_at,
+                  avatar_url: comment.author?.avatar_url || null,
+                  parent_comment_id: comment.parent_comment_id,
+                  
+                  // Store author data in individual columns instead of as a whole object
+                  author_id: comment.author?.id || null,
+                  author_created_at: comment.author?.created_at || null,
+                  author_description: comment.author?.description || null,
+                  author_twitter: comment.author?.twitter || null,
+                  author_discord_username: comment.author?.discord_username || null,
+                  author_discord_id: comment.author?.discord_id || null,
+                  author_is_admin: comment.author?.is_admin || false,
+                  
+                  // Store all additional metadata
+                  project_id: comment.project_id,
+                  raw_content: comment.raw_content,
+                  deleted: comment.deleted || false,
+                  pinned: comment.pinned || false,
+                  pinned_by: comment.pinned_by,
+                  reactions: comment.reactions,
+                  reply_count: comment.reply_count || 0,
+                  
+                  // Store content object in individual fields
+                  content_type: comment.content?.type || null,
+                  content_children: comment.content?.children || [],
+                  // Extract other important content properties if needed
+                  content_text_nodes: extractTextNodes(comment.content),
+                  content_link_nodes: extractLinkNodes(comment.content),
+                  content_paragraph_count: countParagraphs(comment.content)
+                });
                 
-                // Store author data in individual columns instead of as a whole object
-                author_id: comment.author?.id || null,
-                author_created_at: comment.author?.created_at || null,
-                author_description: comment.author?.description || null,
-                author_twitter: comment.author?.twitter || null,
-                author_discord_username: comment.author?.discord_username || null,
-                author_discord_id: comment.author?.discord_id || null,
-                author_is_admin: comment.author?.is_admin || false,
-                
-                // Store all additional metadata
-                project_id: comment.project_id,
-                raw_content: comment.raw_content,
-                deleted: comment.deleted || false,
-                pinned: comment.pinned || false,
-                pinned_by: comment.pinned_by,
-                reactions: comment.reactions,
-                reply_count: comment.reply_count || 0,
-                
-                // Store content object in individual fields
-                content_type: comment.content?.type || null,
-                content_children: comment.content?.children || [],
-                // Extract other important content properties if needed
-                content_text_nodes: extractTextNodes(comment.content),
-                content_link_nodes: extractLinkNodes(comment.content),
-                content_paragraph_count: countParagraphs(comment.content)
-              });
-              
-              // Mark as new for highlighting
-              newCommentsRef.current.add(newComment.id);
-              setTimeout(() => {
-                newCommentsRef.current.delete(newComment.id);
-              }, 3000);
+                // Mark as new for highlighting
+                newCommentsRef.current.add(newComment.id);
+                setTimeout(() => {
+                  newCommentsRef.current.delete(newComment.id);
+                }, 3000);
+              }
             }
           }
           
