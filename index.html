@@ -111,6 +111,21 @@
       margin: 10px 0;
       text-align: center;
     }
+    .unsynced-icon {
+      margin-left: 8px;
+      color: #ff9800;
+      font-size: 14px;
+      display: inline-flex;
+      align-items: center;
+    }
+    .unsynced-dot {
+      width: 8px;
+      height: 8px;
+      background-color: #ff9800;
+      border-radius: 50%;
+      margin-right: 5px;
+      animation: pulse 2s infinite;
+    }
     @media (max-width: 768px) {
       .container {
         padding: 10px;
@@ -134,6 +149,8 @@
       const [lastSyncTime, setLastSyncTime] = useState(null);
       const [isSyncing, setIsSyncing] = useState(false);
       const [error, setError] = useState(null);
+      const [unsyncedComments, setUnsyncedComments] = useState([]);
+      const [currentUser, setCurrentUser] = useState(null);
       const newCommentsRef = useRef(new Set());
       const projectIdRef = useRef(null);
 
@@ -142,6 +159,19 @@
         room.collection('comment').subscribe,
         room.collection('comment').getList
       );
+
+      // Get current user
+      useEffect(() => {
+        const fetchCurrentUser = async () => {
+          try {
+            const user = await window.websim.getCurrentUser();
+            setCurrentUser(user);
+          } catch (err) {
+            console.error("Error getting current user:", err);
+          }
+        };
+        fetchCurrentUser();
+      }, []);
 
       // Function to get current project ID
       const getCurrentProjectId = async () => {
@@ -226,41 +256,65 @@
           // Get all existing comments for comparison
           const allExistingComments = room.collection('comment').getList();
           
+          // Track unsynced comments (comments from other users)
+          const newUnsyncedComments = [...unsyncedComments];
+          
           // Process and sync each comment to our database
           for (const item of metadataComments) {
             const comment = item.comment;
             
             // Check if comment already exists in our database using comprehensive duplicate check
             if (!isDuplicateComment(comment, allExistingComments)) {
-              // Add new comment to database with all metadata
-              const newComment = await room.collection('comment').create({
-                metadata_id: comment.id,
-                username: comment.author?.username || "anonymous",
-                message: parseCommentContent(comment),
-                timestamp: comment.created_at,
-                avatar_url: comment.author?.avatar_url || null,
-                parent_comment_id: comment.parent_comment_id,
-                
-                // Store all additional metadata
-                project_id: comment.project_id,
-                raw_content: comment.raw_content,
-                deleted: comment.deleted || false,
-                pinned: comment.pinned || false,
-                pinned_by: comment.pinned_by,
-                reactions: comment.reactions,
-                reply_count: comment.reply_count || 0,
-                content: comment.content, // Store the original content structure
-                author: comment.author     // Store the full author object
-              });
+              const commentAuthorUsername = comment.author?.username || "anonymous";
+              const isCurrentUserComment = currentUser && commentAuthorUsername === currentUser.username;
               
-              // Mark as new for highlighting
-              newCommentsRef.current.add(newComment.id);
-              setTimeout(() => {
-                newCommentsRef.current.delete(newComment.id);
-              }, 3000);
+              // If it's the current user's comment, add to database
+              if (isCurrentUserComment) {
+                const newComment = await room.collection('comment').create({
+                  metadata_id: comment.id,
+                  username: commentAuthorUsername,
+                  message: parseCommentContent(comment),
+                  timestamp: comment.created_at,
+                  avatar_url: comment.author?.avatar_url || null,
+                  parent_comment_id: comment.parent_comment_id,
+                  
+                  // Store all additional metadata
+                  project_id: comment.project_id,
+                  raw_content: comment.raw_content,
+                  deleted: comment.deleted || false,
+                  pinned: comment.pinned || false,
+                  pinned_by: comment.pinned_by,
+                  reactions: comment.reactions,
+                  reply_count: comment.reply_count || 0,
+                  content: comment.content, // Store the original content structure
+                  author: comment.author     // Store the full author object
+                });
+                
+                // Mark as new for highlighting
+                newCommentsRef.current.add(newComment.id);
+                setTimeout(() => {
+                  newCommentsRef.current.delete(newComment.id);
+                }, 3000);
+              } else {
+                // If it's not the current user's comment, add to unsynced comments
+                if (!newUnsyncedComments.some(c => c.id === comment.id)) {
+                  newUnsyncedComments.push({
+                    id: comment.id,
+                    metadata_id: comment.id,
+                    username: commentAuthorUsername,
+                    message: parseCommentContent(comment),
+                    timestamp: comment.created_at,
+                    avatar_url: comment.author?.avatar_url || null,
+                    parent_comment_id: comment.parent_comment_id,
+                    isUnsynced: true
+                  });
+                }
+              }
             }
           }
           
+          // Update unsynced comments state
+          setUnsyncedComments(newUnsyncedComments);
           setLastSyncTime(new Date());
         } catch (error) {
           console.error('Error syncing comments:', error);
@@ -297,10 +351,16 @@
         return newCommentsRef.current.has(id);
       };
 
+      // Combine database comments and unsynced comments for rendering
+      const allComments = [...comments, ...unsyncedComments.filter(uc => 
+        !comments.some(c => c.metadata_id === uc.metadata_id)
+      )];
+
       return (
         <div className="container">
           <div className="header">
             <h1>Realtime Comments</h1>
+            {currentUser && <p>Logged in as: @{currentUser.username}</p>}
           </div>
           
           {error && (
@@ -308,10 +368,10 @@
           )}
           
           <div className="comment-list">
-            {comments.length === 0 ? (
+            {allComments.length === 0 ? (
               <div className="status">No comments yet</div>
             ) : (
-              comments.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp)).map(comment => (
+              allComments.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp)).map(comment => (
                 <div key={comment.id} className={`comment ${isNewComment(comment.id) ? 'new-comment' : ''}`}>
                   <img 
                     src={comment.avatar_url || `https://images.websim.ai/avatar/${comment.username}`} 
@@ -320,7 +380,15 @@
                     onError={(e) => { e.target.src = 'https://via.placeholder.com/40'; }}
                   />
                   <div className="content">
-                    <div className="username">@{comment.username}</div>
+                    <div className="username">
+                      @{comment.username}
+                      {comment.isUnsynced && (
+                        <span className="unsynced-icon">
+                          <span className="unsynced-dot"></span>
+                          Unsynced
+                        </span>
+                      )}
+                    </div>
                     <div className="timestamp">{formatTimestamp(comment.timestamp)}</div>
                     <div className="message">{comment.message}</div>
                   </div>
